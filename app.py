@@ -4,16 +4,16 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from openai import OpenAI
 
-# ==========================
-#   USTAWIENIA
-# ==========================
+# ===========================
+#      USTAWIENIA
+# ===========================
 
-st.set_page_config(page_title="MKS Knowledge Engine", layout="wide")
+st.set_page_config(page_title="Silnik wiedzy MKS", layout="wide")
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-# ==========================
-#   ŁADOWANIE DANYCH
-# ==========================
+# ===========================
+#      ŁADOWANIE DANYCH
+# ===========================
 
 @st.cache_data
 def load_data():
@@ -23,56 +23,71 @@ def load_data():
 
 df = load_data()
 
-# ==========================
-#   TWORZENIE EMBEDDINGÓW
-# ==========================
+# ===========================
+#      TWORZENIE EMBEDDINGÓW
+# ===========================
 
 @st.cache_resource
 def compute_embeddings(texts):
     """
-    Generuje embeddings dla listy tekstów.
+    Generuje embeddingi dla listy tekstów.
     """
     batch = client.embeddings.create(
         model="text-embedding-3-large",
         input=texts
     )
-    vectors = np.array([d.embedding for d in batch.data])
+    vectors = np.array([item.embedding for item in batch.data])
     return vectors
 
-# Przygotowanie tekstów do embeddingu
+# Tekst do porównania = połączenie kategorii + tagów + treści
 combined_texts = (
-    df["category"].astype(str) + " "
-    + df["tags"].astype(str) + " "
-    + df["content"].astype(str)
+    df["category"].fillna("") + " | " +
+    df["tags"].fillna("") + " | " +
+    df["content"].fillna("")
 ).tolist()
 
 emb_matrix = compute_embeddings(combined_texts)
 
+# ===========================
+#      WYSZUKIWANIE
+# ===========================
 
-# ==========================
-#   FUNKCJA WYSZUKIWANIA
-# ==========================
+def semantic_search(query, top_k=5):
+    query_emb = compute_embeddings([query])[0]
+    similarities = cosine_similarity([query_emb], emb_matrix)[0]
 
-def semantic_search(query, top_k=10):
-    """
-    Zwraca najlepsze dopasowania do zapytania użytkownika.
-    """
-    q_emb = client.embeddings.create(
-        model="text-embedding-3-large",
-        input=query
-    ).data[0].embedding
+    idx = similarities.argsort()[::-1][:top_k]
 
-    sims = cosine_similarity([q_emb], emb_matrix)[0]
-    top_idx = sims.argsort()[::-1][:top_k]
-
-    results = df.iloc[top_idx].copy()
-    results["similarity"] = sims[top_idx]
+    results = []
+    for i in idx:
+        results.append({
+            "score": float(similarities[i]),
+            "category": df.iloc[i]["category"],
+            "tags": df.iloc[i]["tags"],
+            "content": df.iloc[i]["content"]
+        })
     return results
 
+# ===========================
+#      INTERFEJS STREAMLIT
+# ===========================
 
-# ==========================
-#   UI
-# ==========================
+st.title("🔎 Silnik Wiedzy MKS – wyszukiwarka semantyczna")
 
-st.title("🧠 MKS Knowledge Engine")
-st.write("Zaawansowana wyszukiwarka wiedzy
+query = st.text_input("Wpisz czego szukasz:", "")
+
+if query:
+    results = semantic_search(query, top_k=5)
+
+    st.subheader("Wyniki wyszukiwania:")
+
+    for r in results:
+        st.markdown(f"""
+        ### 📌 {r['category']}
+        **Tagi:** {r['tags']}  
+        **Dopasowanie:** {round(r['score'], 3)}
+        
+        {r['content']}
+        ---
+        """)
+
