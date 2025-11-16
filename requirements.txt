@@ -1,7 +1,6 @@
 streamlit
-sentence-transformers
 openai
-pandas
+sentence-transformers
 numpy
-faiss-cpu==1.7.4
+pandas
 python-dotenv
