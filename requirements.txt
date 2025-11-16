@@ -3,5 +3,5 @@ sentence-transformers
 openai
 pandas
 numpy
-faiss-cpu
+faiss-cpu==1.7.4
 python-dotenv
