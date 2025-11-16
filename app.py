@@ -1,93 +1,75 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
 from openai import OpenAI
-
-# ===========================
-#      USTAWIENIA
-# ===========================
+import numpy as np
 
 st.set_page_config(page_title="Silnik wiedzy MKS", layout="wide")
+st.title("🔎 Silnik Wiedzy MKS")
+
+# --- OpenAI Client ---
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-# ===========================
-#      ŁADOWANIE DANYCH
-# ===========================
+# --- Przykładowa baza wiedzy ---
+DOCUMENTS = [
+    "Regulamin szkoły określa zasady organizacyjne oraz obowiązki uczniów.",
+    "Uczeń ma prawo do bezpiecznych warunków nauki oraz uzyskania wsparcia pedagoga.",
+    "Sekretariat jest czynny od poniedziałku do piątku w godzinach 8:00–15:00.",
+    "Oceny można sprawdzać w dzienniku elektronicznym Librus.",
+    "Rodzic może umówić spotkanie z wychowawcą poprzez e-dziennik.",
+    "Szkoła organizuje dodatkowe zajęcia wyrównawcze oraz koła zainteresowań.",
+]
 
-@st.cache_data
-def load_data():
-    df = pd.read_csv("knowledge.csv")
-    df["id"] = df.index
-    return df
-
-df = load_data()
-
-# ===========================
-#      TWORZENIE EMBEDDINGÓW
-# ===========================
-
-@st.cache_resource
+# --- Liczymy embeddingi dokumentów ---
+@st.cache_data(show_spinner=False)
 def compute_embeddings(texts):
-    """
-    Generuje embeddingi dla listy tekstów.
-    """
-    batch = client.embeddings.create(
-        model="text-embedding-3-large",
+    response = client.embeddings.create(
+        model="text-embedding-3-small",
         input=texts
     )
-    vectors = np.array([item.embedding for item in batch.data])
-    return vectors
+    return [item.embedding for item in response.data]
 
-# Tekst do porównania = połączenie kategorii + tagów + treści
-combined_texts = (
-    df["category"].fillna("") + " | " +
-    df["tags"].fillna("") + " | " +
-    df["content"].fillna("")
-).tolist()
+DOCUMENT_EMB = compute_embeddings(DOCUMENTS)
 
-emb_matrix = compute_embeddings(combined_texts)
+# --- Funkcja wyszukująca najlepszy dokument ---
+def semantic_search(query, top_k=3):
+    q_emb = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=query
+    ).data[0].embedding
 
-# ===========================
-#      WYSZUKIWANIE
-# ===========================
+    scores = []
+    for doc, emb in zip(DOCUMENTS, DOCUMENT_EMB):
+        score = np.dot(q_emb, emb) / (np.linalg.norm(q_emb) * np.linalg.norm(emb))
+        scores.append((score, doc))
 
-def semantic_search(query, top_k=5):
-    query_emb = compute_embeddings([query])[0]
-    similarities = cosine_similarity([query_emb], emb_matrix)[0]
+    scores.sort(reverse=True, key=lambda x: x[0])
+    return scores[:top_k]
 
-    idx = similarities.argsort()[::-1][:top_k]
-
-    results = []
-    for i in idx:
-        results.append({
-            "score": float(similarities[i]),
-            "category": df.iloc[i]["category"],
-            "tags": df.iloc[i]["tags"],
-            "content": df.iloc[i]["content"]
-        })
-    return results
-
-# ===========================
-#      INTERFEJS STREAMLIT
-# ===========================
-
-st.title("🔎 Silnik Wiedzy MKS – wyszukiwarka semantyczna")
-
-query = st.text_input("Wpisz czego szukasz:", "")
+# --- UI ---
+query = st.text_input("🔍 Wpisz pytanie:", placeholder="Np. kiedy czynny jest sekretariat?")
 
 if query:
-    results = semantic_search(query, top_k=5)
+    st.subheader("📄 Najtrafniejsze wyniki wyszukiwania:")
+    results = semantic_search(query)
 
-    st.subheader("Wyniki wyszukiwania:")
+    for score, doc in results:
+        st.write(f"**Wynik dopasowania:** {round(score, 3)}")
+        st.write(doc)
+        st.markdown("---")
 
-    for r in results:
-        st.markdown(f"""
-        ### 📌 {r['category']}
-        **Tagi:** {r['tags']}  
-        **Dopasowanie:** {round(r['score'], 3)}
-        
-        {r['content']}
-        ---
-        """)
+    # --- Generowanie odpowiedzi na podstawie wyników ---
+    context = "\n".join([doc for _, doc in results])
+
+    completion = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": "Odpowiadaj krótko i rzeczowo, korzystając tylko z podanych informacji."
+            },
+            {"role": "user", "content": f"Pytanie: {query}\n\nInformacje:\n{context}"}
+        ]
+    )
+
+    st.subheader("🤖 Odpowiedź AI:")
+    st.write(completion.choices[0].message.content)
 
