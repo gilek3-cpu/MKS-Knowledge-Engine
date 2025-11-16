@@ -1,75 +1,95 @@
 import streamlit as st
+import pandas as pd
 from openai import OpenAI
 import numpy as np
 
-st.set_page_config(page_title="Silnik wiedzy MKS", layout="wide")
-st.title("🔎 Silnik Wiedzy MKS")
+st.set_page_config(page_title="Silnik Wiedzy MKS", page_icon="🔍")
 
-# --- OpenAI Client ---
+st.title("🔍 Silnik Wiedzy MKS")
+
+# -----------------------------
+# Ładowanie dokumentów
+# -----------------------------
+@st.cache_data
+def load_docs():
+    df = pd.read_csv("knowledge.csv")
+    df["full_text"] = df["category"] + " | " + df["tags"] + " | " + df["content"]
+    return df
+
+docs = load_docs()
+
+# -----------------------------
+# OpenAI klient
+# -----------------------------
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-# --- Przykładowa baza wiedzy ---
-DOCUMENTS = [
-    "Regulamin szkoły określa zasady organizacyjne oraz obowiązki uczniów.",
-    "Uczeń ma prawo do bezpiecznych warunków nauki oraz uzyskania wsparcia pedagoga.",
-    "Sekretariat jest czynny od poniedziałku do piątku w godzinach 8:00–15:00.",
-    "Oceny można sprawdzać w dzienniku elektronicznym Librus.",
-    "Rodzic może umówić spotkanie z wychowawcą poprzez e-dziennik.",
-    "Szkoła organizuje dodatkowe zajęcia wyrównawcze oraz koła zainteresowań.",
-]
-
-# --- Liczymy embeddingi dokumentów ---
-@st.cache_data(show_spinner=False)
-def compute_embeddings(texts):
-    response = client.embeddings.create(
-        model="text-embedding-3-small",
+# -----------------------------
+# Embeddingi
+# -----------------------------
+@st.cache_resource
+def embed_documents(texts):
+    emb = client.embeddings.create(
+        model="text-embedding-3-large",
         input=texts
     )
-    return [item.embedding for item in response.data]
+    return np.array([e.embedding for e in emb.data])
 
-DOCUMENT_EMB = compute_embeddings(DOCUMENTS)
+DOCUMENT_EMB = embed_documents(docs["full_text"].tolist())
 
-# --- Funkcja wyszukująca najlepszy dokument ---
-def semantic_search(query, top_k=3):
+# -----------------------------
+# Szukanie podobieństwa
+# -----------------------------
+def semantic_search(query, top_k=5):
     q_emb = client.embeddings.create(
-        model="text-embedding-3-small",
+        model="text-embedding-3-large",
         input=query
     ).data[0].embedding
 
-    scores = []
-    for doc, emb in zip(DOCUMENTS, DOCUMENT_EMB):
-        score = np.dot(q_emb, emb) / (np.linalg.norm(q_emb) * np.linalg.norm(emb))
-        scores.append((score, doc))
+    sims = DOCUMENT_EMB @ np.array(q_emb)
 
-    scores.sort(reverse=True, key=lambda x: x[0])
-    return scores[:top_k]
+    idx = sims.argsort()[::-1][:top_k]
+    return docs.iloc[idx], sims[idx]
 
-# --- UI ---
-query = st.text_input("🔍 Wpisz pytanie:", placeholder="Np. kiedy czynny jest sekretariat?")
 
-if query:
-    st.subheader("📄 Najtrafniejsze wyniki wyszukiwania:")
-    results = semantic_search(query)
+# -----------------------------
+# ChatGPT odpowiedź
+# -----------------------------
+def ask_gpt(context, question):
+    prompt = f"""
+Użyj poniższego kontekstu i odpowiedz zwięźle i konkretnie:
 
-    for score, doc in results:
-        st.write(f"**Wynik dopasowania:** {round(score, 3)}")
-        st.write(doc)
-        st.markdown("---")
+KONTEKST:
+{context}
 
-    # --- Generowanie odpowiedzi na podstawie wyników ---
-    context = "\n".join([doc for _, doc in results])
+PYTANIE:
+{question}
+"""
 
     completion = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": "Odpowiadaj krótko i rzeczowo, korzystając tylko z podanych informacji."
-            },
-            {"role": "user", "content": f"Pytanie: {query}\n\nInformacje:\n{context}"}
-        ]
+        model="gpt-4.1-mini",
+        messages=[{"role": "user", "content": prompt}]
     )
 
-    st.subheader("🤖 Odpowiedź AI:")
-    st.write(completion.choices[0].message.content)
+    return completion.choices[0].message["content"]
 
+
+# -----------------------------
+# UI
+# -----------------------------
+user_query = st.text_input("Zadaj pytanie:")
+
+if user_query:
+    st.subheader("🔎 Najbardziej pasujące fragmenty:")
+
+    results, scores = semantic_search(user_query)
+
+    context_block = ""
+
+    for i, row in results.iterrows():
+        st.markdown(f"**• {row['category']}** — _{row['tags']}_\n\n{row['content']}")
+        st.markdown("---")
+        context_block += row["content"] + "\n"
+
+    st.subheader("💬 Odpowiedź:")
+    answer = ask_gpt(context_block, user_query)
+    st.write(answer)
