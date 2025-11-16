@@ -2,74 +2,47 @@ import streamlit as st
 import pandas as pd
 from openai import OpenAI
 
-st.set_page_config(page_title="Silnik Wiedzy MKS", page_icon="🧠")
+st.set_page_config(page_title="Silnik Wiedzy MKS", page_icon="🔎")
 
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-@st.cache_resource
-def load_docs():
-    # Wymuszamy UTF-8 i ignorujemy ewentualne złe znaki
-    return pd.read_csv("knowledge.csv", encoding="utf-8", on_bad_lines="skip")
+# --- Wczytywanie CSV z polskimi znakami ---
+@st.cache_data
+def load_knowledge():
+    return pd.read_csv("knowledge.csv", encoding="utf-8")
 
+df = load_knowledge()
+
+# --- Tworzenie embeddingów (UTF-8 fix) ---
 @st.cache_resource
 def embed_texts(texts):
-    embeds = client.embeddings.create(
+    clean_texts = [t.encode("utf-8", errors="ignore").decode("utf-8") for t in texts]
+    emb = client.embeddings.create(
         model="text-embedding-3-large",
-        input=texts
+        input=clean_texts
     )
-    return [e.embedding for e in embeds.data]
+    return [e.embedding for e in emb.data]
 
-# -----------------------------
-# ŁADOWANIE BAZY
-# -----------------------------
-docs = load_docs()
-texts = docs["content"].astype(str).tolist()
+DOCUMENT_EMB = embed_texts(df["content"].tolist())
 
-# embeddings dokumentów
-DOCUMENT_EMB = embed_texts(texts)
+# --- Funkcja wyszukująca najlepszą odpowiedź ---
+import numpy as np
 
-# -----------------------------
-# INTERFEJS
-# -----------------------------
-st.title("🔍 Silnik Wiedzy MKS")
+def search(query):
+    q_emb = embed_texts([query])[0]
+    scores = np.dot(DOCUMENT_EMB, q_emb)
+    idx = np.argmax(scores)
+    return df.iloc[idx]
 
-user_input = st.text_input("Zadaj pytanie:")
+# --- UI ---
+st.title("🔎 Silnik Wiedzy MKS")
 
-if user_input:
-    # embedding pytania
-    query_emb = embed_texts([user_input])[0]
+query = st.text_input("Zadaj pytanie:")
 
-    # liczymy podobieństwo kosinusowe
-    import numpy as np
+if query:
+    result = search(query)
+    st.subheader("🔹 Najtrafniejsza odpowiedź:")
+    st.write(result["content"])
 
-    def cos_sim(a, b):
-        return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+    st.caption(f"Kategoria: {result['category']} | Tag: {result['tags']}")
 
-    sims = [cos_sim(query_emb, e) for e in DOCUMENT_EMB]
-
-    best_idx = int(np.argmax(sims))
-    best_row = docs.iloc[best_idx]
-
-    # generujemy odpowiedź
-    prompt = f"""
-Użyj tej wiedzy:
-Kategoriа: {best_row['category']}
-Tagi: {best_row['tags']}
-Treść: {best_row['content']}
-
-Pytanie użytkownika: {user_input}
-
-Odpowiedz krótko i konkretnie.
-"""
-
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    st.markdown("### 🧠 Odpowiedź:")
-    st.write(response.choices[0].message.content)
-
-    st.markdown("---")
-    st.markdown("### 📚 Znaleziono w bazie:")
-    st.write(best_row["content"])
