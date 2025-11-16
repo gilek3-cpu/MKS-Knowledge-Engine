@@ -1,16 +1,15 @@
 import streamlit as st
-import requests
-import json
+import pandas as pd
+import numpy as np
 from groq import Groq
+import os
 
-# Load Groq API Key
-GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-
-# Initialize Groq client
+# Load API key
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 client = Groq(api_key=GROQ_API_KEY)
 
 # ------------------------------
-# EMBEDDINGS via Groq
+# Compute Embeddings (Groq)
 # ------------------------------
 def compute_embeddings(texts):
     embeddings = []
@@ -23,7 +22,7 @@ def compute_embeddings(texts):
     return embeddings
 
 # ------------------------------
-# LLM Response (using Groq)
+# LLM Response (Groq)
 # ------------------------------
 def ask_llm(prompt):
     completion = client.chat.completions.create(
@@ -31,21 +30,17 @@ def ask_llm(prompt):
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
     )
-    return completion.choices[0].message["content"]
+    return completion.choices[0].message.content
 
 # ------------------------------
 # Streamlit UI
 # ------------------------------
-st.title("🧠 Silnik Wiedzy — Groq Edition 🚀")
-
+st.title("🧠 Silnik Wiedzy – Groq Edition 🚀")
 st.write("Embeddings + LLM działają teraz **w 100% na darmowym Groq API**.")
 
-# Example documents
-DOCUMENT_TEXTS = [
-    "Python jest językiem programowania używanym do analizy danych.",
-    "Streamlit to framework do budowy aplikacji webowych w Pythonie.",
-    "Groq oferuje bardzo szybkie darmowe modele AI dla programistów.",
-]
+# Load your CSV knowledge
+df = pd.read_csv("knowledge.csv")
+DOCUMENT_TEXTS = df["text"].tolist()
 
 # Cache embeddings
 @st.cache_data
@@ -55,10 +50,8 @@ def load_document_embeddings():
 DOCUMENT_EMB = load_document_embeddings()
 
 # ------------------------------
-# Simple semantic search
+# Semantic Search
 # ------------------------------
-import numpy as np
-
 def cosine_similarity(a, b):
     a = np.array(a)
     b = np.array(b)
@@ -78,10 +71,9 @@ query = st.text_input("Zadaj pytanie:")
 if query:
     with st.spinner("Szukam..."):
         best_doc, score = search(query)
-        st.subheader("Najbardziej pasujący dokument:")
+        st.subheader("Najbardziej pasujący fragment wiedzy:")
         st.write(best_doc)
 
-        # Ask LLM to answer using the found context
         final_prompt = f"""
 Użyj poniższego fragmentu wiedzy aby odpowiedzieć na pytanie użytkownika.
 
