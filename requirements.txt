@@ -3,3 +3,4 @@ numpy
 groq
 openai
 pandas
+sklearn
