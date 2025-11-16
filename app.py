@@ -1,33 +1,52 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from openai import OpenAI
+import unicodedata
+import json
 
-st.set_page_config(page_title="Silnik Wiedzy MKS", page_icon="🔎")
+st.set_page_config(page_title="Silnik Wiedzy MKS", page_icon="📘")
 
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-# --- Wczytywanie CSV z polskimi znakami ---
+# --- Normalizacja znaków (pełny fix) ---
+def normalize(text):
+    if isinstance(text, str):
+        return unicodedata.normalize("NFC", text)
+    return text
+
+# --- Wczytywanie danych ---
 @st.cache_data
 def load_knowledge():
-    return pd.read_csv("knowledge.csv", encoding="utf-8")
+    df = pd.read_csv("knowledge.csv", encoding="utf-8")
+    df["content"] = df["content"].apply(normalize)
+    return df
 
 df = load_knowledge()
 
-# --- Tworzenie embeddingów (UTF-8 fix) ---
+# --- Embeddingi ---
 @st.cache_resource
 def embed_texts(texts):
-    clean_texts = [t.encode("utf-8", errors="ignore").decode("utf-8") for t in texts]
-    emb = client.embeddings.create(
-        model="text-embedding-3-large",
-        input=clean_texts
+    clean = [normalize(t) for t in texts]
+
+    # API chce czyste UTF-8 → pakujemy do JSON ręcznie (fix)
+    payload = {"model": "text-embedding-3-large", "input": clean}
+    payload = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+    emb = client._client.post(
+        "/v1/embeddings",
+        data=payload,
+        headers={
+            "Content-Type": "application/json; charset=utf-8"
+        }
     )
-    return [e.embedding for e in emb.data]
+
+    vectors = [d["embedding"] for d in emb["data"]]
+    return vectors
 
 DOCUMENT_EMB = embed_texts(df["content"].tolist())
 
-# --- Funkcja wyszukująca najlepszą odpowiedź ---
-import numpy as np
-
+# --- Wyszukiwanie ---
 def search(query):
     q_emb = embed_texts([query])[0]
     scores = np.dot(DOCUMENT_EMB, q_emb)
@@ -35,14 +54,10 @@ def search(query):
     return df.iloc[idx]
 
 # --- UI ---
-st.title("🔎 Silnik Wiedzy MKS")
-
+st.title("📘 Silnik Wiedzy MKS")
 query = st.text_input("Zadaj pytanie:")
 
 if query:
-    result = search(query)
-    st.subheader("🔹 Najtrafniejsza odpowiedź:")
-    st.write(result["content"])
-
-    st.caption(f"Kategoria: {result['category']} | Tag: {result['tags']}")
-
+    answer = search(query)
+    st.subheader("Najtrafniejsza odpowiedź:")
+    st.write(answer["content"])
