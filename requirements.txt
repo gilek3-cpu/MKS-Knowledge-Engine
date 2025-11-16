@@ -1,3 +1,5 @@
 streamlit
-sentence-transformers
+pandas
 numpy
+scikit-learn
+openai
