@@ -7,8 +7,7 @@ from openai import OpenAI
 
 # --- OpenAI client ---
 client = OpenAI(
-    api_key=st.secrets["OPENAI_API_KEY"],
-    default_headers={"Content-Type": "application/json; charset=utf-8"}
+    api_key=st.secrets["OPENAI_API_KEY"]
 )
 
 # --- Dokumenty bazowe ---
