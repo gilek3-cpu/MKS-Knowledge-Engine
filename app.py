@@ -1,27 +1,31 @@
 # -*- coding: utf-8 -*-
 import os
-import streamlit as st
 import numpy as np
+import streamlit as st
 import httpx
 from openai import OpenAI
 
-# ---- HARD FIX FOR STREAMLIT CLOUD ----
-# Tworzymy własnego klienta HTTP z wymuszonymi nagłówkami ASCII
+# ---- FIX: całkowity override transportu HTTP ----
+class AsciiTransport(httpx.HTTPTransport):
+    def handle_request(self, request):
+        clean_headers = {}
+        for k, v in request.headers.items():
+            try:
+                clean_headers[k] = v.encode("ascii", "ignore").decode("ascii")
+            except:
+                clean_headers[k] = ""
+        request.headers = clean_headers
+        return super().handle_request(request)
 
-def get_http_client():
-    return httpx.Client(
-        headers={
-            "User-Agent": "MKS-Knowledge-Engine",   # ← zawsze ASCII
-            "Accept-Charset": "utf-8",
-        },
-        timeout=30.0,
-    )
-
-http_client = get_http_client()
+http_client = httpx.Client(
+    transport=AsciiTransport(),
+    headers={"User-Agent": "MKS-Engine"},
+    timeout=30.0
+)
 
 client = OpenAI(
     api_key=st.secrets["OPENAI_API_KEY"],
-    http_client=http_client       # ← KLUCZOWE
+    http_client=http_client,   # ← to jest klucz
 )
 
 # ---- Dokumenty ----
@@ -32,14 +36,14 @@ DOCUMENT_TEXTS = [
     "Instrukcja obsługi systemu MKS – logowanie, panel klienta, faktury."
 ]
 
-# ---- Embeddingi ----
+# ---- Cache ----
 @st.cache_data
 def compute_embeddings(texts):
     response = client.embeddings.create(
         model="text-embedding-3-small",
         input=[str(t) for t in texts]
     )
-    return np.array([item.embedding for item in response.data])
+    return np.array([x.embedding for x in response.data])
 
 DOCUMENT_EMB = compute_embeddings(DOCUMENT_TEXTS)
 
@@ -54,11 +58,10 @@ if st.button("Szukaj") and query:
         input=[query]
     ).data[0].embedding
 
-    similarities = np.dot(DOCUMENT_EMB, q_emb)
-    best_idx = int(np.argmax(similarities))
-    best_doc = DOCUMENT_TEXTS[best_idx]
+    sims = np.dot(DOCUMENT_EMB, q_emb)
+    idx = int(np.argmax(sims))
 
     st.subheader("🔍 Najbardziej trafny dokument:")
-    st.write(best_doc)
+    st.write(DOCUMENT_TEXTS[idx])
 
-    st.caption(f"Podobieństwo: {similarities[best_idx]:.4f}")
+    st.caption(f"Podobieństwo: {sims[idx]:.4f}")
