@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-import sys
-sys.stdout.reconfigure(encoding="utf-8")
+import sys, io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='ignore')
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='ignore')
 
 import streamlit as st
 import numpy as np
 from openai import OpenAI
 
-# --- OpenAI client ---
+# --- OpenAI klient ---
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 # --- Dokumenty bazowe ---
@@ -17,7 +18,7 @@ DOCUMENT_TEXTS = [
     "Instrukcja obsługi systemu MKS – logowanie, panel klienta, faktury."
 ]
 
-# --- Funkcja generująca embeddingi dokumentów ---
+# --- Funkcja generująca embeddingi ---
 @st.cache_data(show_spinner=False)
 def compute_embeddings(texts):
     response = client.embeddings.create(
@@ -26,7 +27,7 @@ def compute_embeddings(texts):
     )
     return np.array([item.embedding for item in response.data])
 
-# --- Generujemy embeddingi dokumentów JEDEN RAZ ---
+# Wygeneruj embeddingi dokumentów JEDEN RAZ
 DOCUMENT_EMB = compute_embeddings(DOCUMENT_TEXTS)
 
 # --- UI ---
@@ -37,16 +38,16 @@ query = st.text_input("Zadaj pytanie:", placeholder="np. 'Jak zgłosić reklamac
 if st.button("Szukaj") and query:
     q_emb = client.embeddings.create(
         model="text-embedding-3-small",
-        input=query
+        input=[query]
     ).data[0].embedding
 
-    # Liczymy podobieństwo cosinusowe
-    sims = np.dot(DOCUMENT_EMB, q_emb) / (
-        np.linalg.norm(DOCUMENT_EMB, axis=1) * np.linalg.norm(q_emb)
-    )
+    # Oblicz podobieństwa (cosine similarity)
+    similarities = np.dot(DOCUMENT_EMB, q_emb)
 
-    best_idx = int(np.argmax(sims))
-    st.subheader("Najbardziej pasujący dokument:")
-    st.write(DOCUMENT_TEXTS[best_idx])
+    best_idx = int(np.argmax(similarities))
+    best_doc = DOCUMENT_TEXTS[best_idx]
 
-    st.caption(f"Podobieństwo: {sims[best_idx]:.4f}")
+    st.subheader("🔍 Najbardziej pasujący dokument:")
+    st.write(best_doc)
+
+    st.caption(f"Podobieństwo: {similarities[best_idx]:.4f}")
