@@ -1,2 +1,7 @@
 streamlit
+sentence-transformers
+openai
 pandas
+numpy
+faiss-cpu
+python-dotenv
