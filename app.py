@@ -7,16 +7,14 @@ import numpy as np
 from openai import OpenAI
 
 # --- OpenAI client ---
-client = OpenAI(
-    api_key=st.secrets["OPENAI_API_KEY"]
-)
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 # --- Dokumenty bazowe ---
 DOCUMENT_TEXTS = [
-    "Procedura reklamacji - klient zgłasza problem przez formularz online.",
-    "Harmonogram pracy magazynu: poniedziałek-piątek 08:00-16:00.",
-    "Zasady zwrotu towaru - do 14 dni od daty zakupu, wymagany paragon.",
-    "Instrukcja obsługi systemu MKS - logowanie, panel klienta, faktury."
+    "Procedura reklamacji: klient zgłasza problem przez formularz online.",
+    "Harmonogram pracy magazynu: poniedziałek–piątek 08:00–16:00.",
+    "Zasady zwrotu towaru: do 14 dni od daty zakupu, wymagany paragon.",
+    "Instrukcja obsługi systemu MKS – logowanie, panel klienta, faktury."
 ]
 
 # --- Funkcja generująca embeddingi dokumentów ---
@@ -28,29 +26,27 @@ def compute_embeddings(texts):
     )
     return np.array([item.embedding for item in response.data])
 
-# Generujemy embeddingi dokumentów JEDEN RAZ
+# --- Generujemy embeddingi dokumentów JEDEN RAZ ---
 DOCUMENT_EMB = compute_embeddings(DOCUMENT_TEXTS)
 
 # --- UI ---
-st.title("🔍 Silnik Wiedzy MKS – wyszukiwarka semantyczna")
+st.title("🧠 Silnik Wiedzy MKS – wyszukiwarka semantyczna")
 
 query = st.text_input("Zadaj pytanie:", placeholder="np. 'Jak zgłosić reklamację?'")
 
 if st.button("Szukaj") and query:
     q_emb = client.embeddings.create(
         model="text-embedding-3-small",
-        input=[query]
+        input=query
     ).data[0].embedding
 
-    q_emb = np.array(q_emb)
-
-    sims = DOCUMENT_EMB @ q_emb / (
+    # Liczymy podobieństwo cosinusowe
+    sims = np.dot(DOCUMENT_EMB, q_emb) / (
         np.linalg.norm(DOCUMENT_EMB, axis=1) * np.linalg.norm(q_emb)
     )
 
     best_idx = int(np.argmax(sims))
-
-    st.subheader("📄 Najbardziej pasująca odpowiedź:")
+    st.subheader("Najbardziej pasujący dokument:")
     st.write(DOCUMENT_TEXTS[best_idx])
 
-    st.caption(f"Similarity score: {sims[best_idx]:.4f}")
+    st.caption(f"Podobieństwo: {sims[best_idx]:.4f}")
