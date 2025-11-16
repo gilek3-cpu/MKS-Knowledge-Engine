@@ -46,6 +46,8 @@ DOCUMENT_TEXTS = [
     "Groq oferuje bardzo szybkie modele AI dla programistów, działające na akceleratorach LPU (Language Processing Unit).",
     "Podobieństwo Kosinusowe (Cosine Similarity) mierzy kąt między dwoma wektorami w przestrzeni, określając podobieństwo semantyczne.",
     "RAG (Retrieval-Augmented Generation) to architektura AI, która wykorzystuje bazę wiedzy (retrieval) do ulepszania odpowiedzi LLM (generation).",
+    "Do wspinaczki sportowej niezbędna jest lina dynamiczna, uprząż i ekspresy. Ważna jest technika wiązania ósemki.",
+    "Wspinaczka tradycyjna wymaga umiejętności osadzania własnej asekuracji, np. kości i friendów. Jest to bardziej wymagające psychicznie.",
 ]
 
 
@@ -106,6 +108,7 @@ def search(query, doc_embeddings, doc_texts):
     query_emb = query_emb_list[0]
     
     # Obliczanie podobieństwa kosinusowego
+    # Wymagane jest rzutowanie na float64 dla poprawności
     similarities = cosine_similarity(query_emb.reshape(1, -1), doc_embeddings.astype(np.float64))
     best = np.argmax(similarities)
     
@@ -118,7 +121,7 @@ def search(query, doc_embeddings, doc_texts):
 st.title("🧠 Silnik Wiedzy — Uproszczona Edycja RAG 🚀")
 
 st.write("LLM (Llama 3 70B) działa na Groq. Embeddingi działają na **stabilnym API OpenAI**.")
-st.write("Ta wersja używa **wbudowanej, małej bazy wiedzy** w kodzie Python, nie pliku CSV, aby uniknąć problemów z ładowaniem.")
+st.write("Ta wersja używa **wbudowanej, małej bazy wiedzy** w kodzie Python, nie pliku CSV.")
 st.markdown("---")
 
 
@@ -143,7 +146,7 @@ DOCUMENT_EMB = load_document_embeddings(DOCUMENT_TEXTS)
 # UI Input
 # ------------------------------
 st.subheader("Faza 2: Zapytanie do Silnika Wiedzy")
-query = st.text_input("Zadaj pytanie (np. Jak działa RAG?):")
+query = st.text_input("Zadaj pytanie (np. Czym jest RAG?):")
 
 if query:
     if DOCUMENT_EMB.size == 0:
@@ -154,13 +157,13 @@ if query:
             # Wyszukiwanie sematyczne
             best_doc, score = search(query, DOCUMENT_EMB, DOCUMENT_TEXTS)
 
-            st.markdown("### 🔎 Znaleziony Kontekst")
+            st.markdown("### 🔎 Znaleziony Kontekst (RAG Retrieval)")
             st.write(f"**Podobieństwo (Cosine Score):** {score:.4f}")
             st.code(best_doc) 
     
             # Tworzenie promptu RAG
             final_prompt = f"""
-            Jesteś ekspertem technicznym. Użyj **wyłącznie** poniższego fragmentu wiedzy, 
+            Jesteś ekspertem technicznym i wspinaczkowym. Użyj **wyłącznie** poniższego fragmentu wiedzy, 
             aby odpowiedzieć na pytanie użytkownika. Odpowiadaj zwięźle i precyzyjnie. 
             Jeśli kontekst nie zawiera odpowiedzi, odpowiedz: 'Brak wystarczających informacji w bazie wiedzy.'.
     
@@ -175,5 +178,5 @@ if query:
     
             # Wywołanie LLM (Groq)
             answer = ask_llm(final_prompt)
-            st.markdown("### 🤖 Odpowiedź Modelu (Llama 3 70B)")
+            st.markdown("### 🤖 Odpowiedź Modelu (Llama 3 70B - Groq)")
             st.info(answer)
