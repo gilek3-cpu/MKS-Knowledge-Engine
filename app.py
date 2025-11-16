@@ -2,14 +2,27 @@
 import os
 import streamlit as st
 import numpy as np
+import httpx
 from openai import OpenAI
 
-# ---- FIX: blokada błędu Unicode przy wysyłaniu nagłówków HTTP ----
-os.environ["PYTHONIOENCODING"] = "utf-8"
-os.environ["OPENAI_USER_AGENT"] = "MKS-Knowledge-Engine/1.0"   # <--- KLUCZOWA LINIA
+# ---- HARD FIX FOR STREAMLIT CLOUD ----
+# Tworzymy własnego klienta HTTP z wymuszonymi nagłówkami ASCII
 
-# ---- OpenAI client ----
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+def get_http_client():
+    return httpx.Client(
+        headers={
+            "User-Agent": "MKS-Knowledge-Engine",   # ← zawsze ASCII
+            "Accept-Charset": "utf-8",
+        },
+        timeout=30.0,
+    )
+
+http_client = get_http_client()
+
+client = OpenAI(
+    api_key=st.secrets["OPENAI_API_KEY"],
+    http_client=http_client       # ← KLUCZOWE
+)
 
 # ---- Dokumenty ----
 DOCUMENT_TEXTS = [
@@ -42,7 +55,6 @@ if st.button("Szukaj") and query:
     ).data[0].embedding
 
     similarities = np.dot(DOCUMENT_EMB, q_emb)
-
     best_idx = int(np.argmax(similarities))
     best_doc = DOCUMENT_TEXTS[best_idx]
 
@@ -50,4 +62,3 @@ if st.button("Szukaj") and query:
     st.write(best_doc)
 
     st.caption(f"Podobieństwo: {similarities[best_idx]:.4f}")
-
