@@ -1,75 +1,99 @@
-# -*- coding: utf-8 -*-
-import json
-import numpy as np
 import streamlit as st
 import requests
+import json
+from groq import Groq
 
-# --- Konfiguracja ---
-# Upewnij się, że masz w Secrets: OPENAI_API_KEY
-OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", None)
-if not OPENAI_API_KEY:
-    st.error("Brakuje OPENAI_API_KEY w secrets (Settings -> Secrets).")
-    st.stop()
+# Load Groq API Key
+GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 
-EMBEDDING_URL = "https://api.openai.com/v1/embeddings"
-HEADERS = {
-    "Authorization": f"Bearer {OPENAI_API_KEY}",
-    "Content-Type": "application/json",
-    "User-Agent": "MKS-Knowledge-Engine/1.0"
-}
+# Initialize Groq client
+client = Groq(api_key=GROQ_API_KEY)
 
-# --- Dokumenty bazowe (przykład) ---
+# ------------------------------
+# EMBEDDINGS via Groq
+# ------------------------------
+def compute_embeddings(texts):
+    embeddings = []
+    for t in texts:
+        response = client.embeddings.create(
+            model="nomic-embed-text",
+            input=t
+        )
+        embeddings.append(response.data[0].embedding)
+    return embeddings
+
+# ------------------------------
+# LLM Response (using Groq)
+# ------------------------------
+def ask_llm(prompt):
+    completion = client.chat.completions.create(
+        model="llama3-70b-8192",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+    )
+    return completion.choices[0].message["content"]
+
+# ------------------------------
+# Streamlit UI
+# ------------------------------
+st.title("🧠 Silnik Wiedzy — Groq Edition 🚀")
+
+st.write("Embeddings + LLM działają teraz **w 100% na darmowym Groq API**.")
+
+# Example documents
 DOCUMENT_TEXTS = [
-    "Procedura reklamacji: klient zgłasza problem przez formularz online.",
-    "Harmonogram pracy magazynu: poniedziałek–piątek 08:00–16:00.",
-    "Zasady zwrotu towaru: do 14 dni od daty zakupu, wymagany paragon.",
-    "Instrukcja obsługi systemu MKS – logowanie, panel klienta, faktury."
+    "Python jest językiem programowania używanym do analizy danych.",
+    "Streamlit to framework do budowy aplikacji webowych w Pythonie.",
+    "Groq oferuje bardzo szybkie darmowe modele AI dla programistów.",
 ]
 
-# --- Funkcja do pobierania embeddingów przez REST (requests) ---
-def get_embeddings_via_requests(texts, model="text-embedding-3-small"):
-    payload = {"model": model, "input": list(map(str, texts))}
-    # requests zajmie się kodowaniem JSON jako UTF-8
-    resp = requests.post(EMBEDDING_URL, headers=HEADERS, json=payload, timeout=30)
-    try:
-        resp.raise_for_status()
-    except requests.exceptions.HTTPError as e:
-        st.error(f"Błąd HTTP przy wywołaniu OpenAI: {e}\nKod odpowiedzi: {resp.status_code}")
-        # pokazuj surową odpowiedź dla debugowania
-        st.write(resp.text)
-        raise
-    data = resp.json()
-    # data["data"] to lista elementów z polem "embedding"
-    embeddings = [item["embedding"] for item in data["data"]]
-    return np.array(embeddings, dtype=np.float32)
+# Cache embeddings
+@st.cache_data
+def load_document_embeddings():
+    return compute_embeddings(DOCUMENT_TEXTS)
 
-# --- Cache'ujemy embeddingi (raz) ---
-@st.cache_data(show_spinner=False)
-def compute_document_embeddings():
-    return get_embeddings_via_requests(DOCUMENT_TEXTS)
+DOCUMENT_EMB = load_document_embeddings()
 
-DOCUMENT_EMB = compute_document_embeddings()
+# ------------------------------
+# Simple semantic search
+# ------------------------------
+import numpy as np
 
-# --- UI ---
-st.title("🔎 Silnik Wiedzy MKS — wyszukiwarka semantyczna")
+def cosine_similarity(a, b):
+    a = np.array(a)
+    b = np.array(b)
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
-query = st.text_input("Zadaj pytanie", placeholder="np. Jak zgłosić reklamację?")
+def search(query):
+    query_emb = compute_embeddings([query])[0]
+    sims = [cosine_similarity(query_emb, emb) for emb in DOCUMENT_EMB]
+    best = np.argmax(sims)
+    return DOCUMENT_TEXTS[best], sims[best]
 
-if st.button("Szukaj") and query:
-    with st.spinner("Generuję embedding zapytania..."):
-        q_emb_arr = get_embeddings_via_requests([query])  # zwraca (1, dim)
-        q_emb = q_emb_arr[0]
+# ------------------------------
+# UI Input
+# ------------------------------
+query = st.text_input("Zadaj pytanie:")
 
-    # Liczymy kosinusowe podobieństwo (przyspieszony sposób)
-    # normalization
-    doc_norms = np.linalg.norm(DOCUMENT_EMB, axis=1)
-    q_norm = np.linalg.norm(q_emb)
-    # unikamy dzielenia przez zero
-    if q_norm == 0 or np.any(doc_norms == 0):
-        st.error("Błąd: wektor o zerowej długości.")
-    else:
-        sims = (DOCUMENT_EMB @ q_emb) / (doc_norms * q_norm)
-        idx = int(np.argmax(sims))
+if query:
+    with st.spinner("Szukam..."):
+        best_doc, score = search(query)
         st.subheader("Najbardziej pasujący dokument:")
-        st.write(DOCUMENT_TEXTS[idx])
-        st.caption(f"Similarity score: {sims[idx]:.4f}")
+        st.write(best_doc)
+
+        # Ask LLM to answer using the found context
+        final_prompt = f"""
+Użyj poniższego fragmentu wiedzy aby odpowiedzieć na pytanie użytkownika.
+
+Pytanie:
+{query}
+
+Kontekst:
+{best_doc}
+
+Odpowiedź:
+"""
+
+        answer = ask_llm(final_prompt)
+        st.subheader("Odpowiedź modelu:")
+        st.write(answer)
