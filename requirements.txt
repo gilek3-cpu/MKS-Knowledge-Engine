@@ -2,5 +2,4 @@ streamlit
 numpy
 groq
 openai
-pandas
-sklearn
+scikit-learn
