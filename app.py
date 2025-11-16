@@ -1,213 +1,170 @@
 import streamlit as st
-import numpy as np
-import json
-from groq import Groq
-from openai import OpenAI
-from openai import APIError
 import pandas as pd
+import numpy as np
+from openai import OpenAI
+from groq import Groq
+from sklearn.metrics.pairwise import cosine_similarity
+from openai import APIError
 
-# --- KLUCZE I INICJALIZACJA ---
-# Keys are retrieved from Streamlit Secrets (secrets.toml)
+# --- 1. KONFIGURACJA API (Pobieranie kluczy z Streamlit Secrets) ---
 
-# Check Groq key (for LLM)
 try:
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 except KeyError:
-    st.error("Configuration error: Missing 'GROQ_API_KEY' in Streamlit Secrets. Required for LLM (Llama 3).")
-    st.stop() 
-
-# Check and initialize OpenAI client (for Embeddings)
+    st.error("Brak klucza GROQ_API_KEY w Streamlit Secrets.")
+    st.stop()
+    
 try:
     OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
-    if not OPENAI_API_KEY:
-        st.error("Error: 'OPENAI_API_KEY' value is required in Streamlit Secrets. We use it for vectorization.")
-        st.stop()
-    openai_client = OpenAI(api_key=OPENAI_API_KEY)
 except KeyError:
-    st.error("Error: Missing 'OPENAI_API_KEY' in Streamlit Secrets. It is REQUIRED for embeddings.")
+    st.error("Brak klucza OPENAI_API_KEY w Streamlit Secrets.")
     st.stop()
 
-# Initialize Groq client (for LLM)
-try:
-    client = Groq(api_key=GROQ_API_KEY)
-except Exception as e:
-    st.error(f"Groq client initialization error: {e}")
-    st.stop()
+# Inicjalizacja klientów
+client_groq = Groq(api_key=GROQ_API_KEY)
+client_openai = OpenAI(api_key=OPENAI_API_KEY)
 
 
-# ------------------------------
-# EMBEDDINGS (Vectorization) - EXCLUSIVELY OpenAI
-# ------------------------------
-@st.cache_data
-def compute_embeddings(texts):
-    """
-    Generates embeddings for a list of texts using the OpenAI model (text-embedding-3-small).
-    """
+# --- 2. FUNKCJE RAG (Embeddings i Czat) ---
+
+@st.cache_data(show_spinner=False)
+def load_and_prepare_data():
+    """Loads knowledge.csv and prepares data lists."""
     try:
-        st.info("Using OpenAI (text-embedding-3-small) for embeddings...")
-        # Required format is a list of strings
-        response = openai_client.embeddings.create(
+        df = pd.read_csv('knowledge.csv', encoding='utf-8')
+        if 'Opis' not in df.columns or 'Źródło' not in df.columns:
+            st.error("Plik 'knowledge.csv' musi zawierać kolumny: 'Opis' i 'Źródło'.")
+            st.stop()
+
+        document_texts = df['Opis'].tolist()
+        document_sources = df['Źródło'].tolist()
+
+        if not document_texts:
+             st.warning("Baza wiedzy (knowledge.csv) jest pusta.")
+             return [], []
+
+        return document_texts, document_sources
+    
+    except Exception as e:
+        st.error(f"Krytyczny błąd ładowania knowledge.csv: {e}")
+        st.stop()
+
+
+@st.cache_data(show_spinner=False)
+def compute_document_embeddings(texts):
+    """Generates embeddings for texts using OpenAI."""
+    if not texts: return np.array([])
+        
+    try:
+        response = client_openai.embeddings.create( 
             model="text-embedding-3-small", 
             input=texts
         )
-        # Retrieve vectors from the response
-        embeddings = [data.embedding for data in response.data]
-        st.success("OpenAI Embeddings success!")
+        embeddings = np.array([data.embedding for data in response.data])
         return embeddings
-
+        
     except APIError as e:
-        # Handle authorization/Quota errors
-        st.error(f"Critical OpenAI API Error (Embeddings): {e}. Check if the OPENAI_API_KEY is correct and you have sufficient credits.")
-        raise RuntimeError("Vectorization error: OpenAI key/credit verification failed.")
+        st.error(f"Krytyczny błąd API OpenAI Embeddings. Sprawdź klucz. Szczegóły: {e}")
+        st.stop()
     except Exception as e:
-        st.error(f"Unexpected error during OpenAI embeddings generation: {e}")
-        raise RuntimeError("Vectorization error: Unknown error.")
+        st.error(f"Nieznany błąd podczas wektoryzacji (OpenAI): {e}")
+        st.stop()
 
 
-# ------------------------------
-# LLM Response (using Groq)
-# ------------------------------
-def ask_llm(prompt):
-    """
-    Generates an LLM response based on the prompt, using the Llama 3 70B model (fast).
-    """
+def ask_llama(prompt):
+    """Generates the LLM response using Llama 3 8B (Groq)."""
     try:
-        completion = client.chat.completions.create(
-            model="llama-3-8b-8192", # Fast Groq model
+        completion = client_groq.chat.completions.create(
+            model="llama-3-8b-8192", 
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
         )
         return completion.choices[0].message.content
     except Exception as e:
-        st.error(f"Error during Groq LLM call: {e}")
-        return "I apologize, an error occurred in communication with the LLM model."
+        st.error(f"Błąd podczas wywołania LLM Groq: {e}")
+        return "Przepraszam, wystąpił błąd w komunikacji z modelem LLM."
 
-# ------------------------------
-# Load data from CSV
-# ------------------------------
-@st.cache_data
-def load_and_prepare_data():
-    """Loads data from knowledge.csv and combines it into a single text."""
-    try:
-        # Assumes knowledge.csv exists and has 'Kategoria' and 'Opis' columns
-        df = pd.read_csv("knowledge.csv")
-        
-        # Combine 'Kategoria' and 'Opis' columns into one string for each row
-        document_texts = [
-            f"Kategoria: {row['Kategoria']}. Opis: {row['Opis']}" 
-            for index, row in df.iterrows()
-        ]
-        return document_texts
-    except FileNotFoundError:
-        st.error("Error: File 'knowledge.csv' not found. Ensure it is in the same directory.")
-        return []
-    except Exception as e:
-        st.error(f"Error loading knowledge.csv: {e}")
-        return []
 
-# ------------------------------
-# Simple semantic search (Cosine Similarity)
-# ------------------------------
-def cosine_similarity(a, b):
-    """Calculates the cosine similarity between two vectors."""
-    a = np.array(a)
-    b = np.array(b)
-    # Protection against division by zero
-    norm_a = np.linalg.norm(a)
-    norm_b = np.linalg.norm(b)
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-        
-    return np.dot(a, b) / (norm_a * norm_b)
-
-def search(query):
-    """Searches for the most similar document to the query."""
-    # 1. Generate embedding for the query
-    try:
-        # Uses compute_embeddings (OpenAI)
-        query_emb_list = compute_embeddings([query])
-    except RuntimeError:
-        return "Error generating query vector.", 0.0 
-        
-    if not query_emb_list:
-        return "Error generating query vector.", 0.0
-
-    query_emb = query_emb_list[0]
+def search_best_context(query_embedding, document_embeddings, document_texts, document_sources):
+    """Finds the best matching context in the knowledge base."""
+    # Reshape the query embedding for cosine_similarity
+    similarities = cosine_similarity(np.array(query_embedding).reshape(1, -1), document_embeddings)
     
-    # 2. Calculate similarity
-    sims = [cosine_similarity(query_emb, emb) for emb in DOCUMENT_EMB]
-    best = np.argmax(sims)
+    best_index = np.argmax(similarities)
+    best_score = similarities[0, best_index]
     
-    return DOCUMENT_TEXTS[best], sims[best]
-
-# ------------------------------
-# Streamlit UI
-# ------------------------------
-st.title("🧠 Silnik Wiedzy (RAG) — Stabilna Edycja 🚀")
-st.markdown("LLM (Llama 3 70B) działa na Groq. Embeddingi działają na **stabilnym API OpenAI**.")
-st.markdown("---")
+    return document_texts[best_index], best_score, document_sources[best_index]
 
 
-# 1. PRZYGOTOWANIE BAZY WIEDZY
-DOCUMENT_TEXTS = load_and_prepare_data()
+# --- 3. GŁÓWNA STRUKTURA APLIKACJI STREAMLIT ---
 
-# Loading and caching embeddings
-@st.cache_resource
-def load_document_embeddings(doc_texts):
-    """Loads embeddings and ensures the application does not run if it fails."""
-    if not doc_texts:
-        st.warning("Knowledge base is empty. Check knowledge.csv file.")
-        return []
+st.set_page_config(layout="centered")
+st.title("🚀 Silnik Wiedzy (RAG) – Stabilna Edycja")
 
-    st.subheader("Faza 1: Wczytywanie i wektoryzacja bazy wiedzy")
-    with st.spinner("Generowanie embeddingów dla dokumentów..."):
+# Faza 1: Wczytywanie bazy wiedzy i generowanie wektorów
+DOCUMENT_TEXTS, DOCUMENT_SOURCES = load_and_prepare_data()
+DOCUMENT_EMBEDDINGS = compute_document_embeddings(DOCUMENT_TEXTS)
+is_data_ready = DOCUMENT_EMBEDDINGS.size > 0
+
+
+if is_data_ready:
+    st.success("Baza wiedzy i wektoryzacja gotowe do użycia.")
+else:
+    st.warning("Aplikacja działa, ale baza wiedzy jest pusta. Uzupełnij plik knowledge.csv.")
+
+# Faza 2: Zapytanie do Silnika Wiedzy (UI)
+st.subheader("Faza 2: Zapytaj Silnik Wiedzy")
+
+query = st.text_input(
+    "Zadaj pytanie (np. Jak ćwiczyć dynamikę siły?)", 
+    key="query_input", 
+    disabled=not is_data_ready
+)
+
+
+if query and is_data_ready:
+    with st.spinner("Przetwarzanie zapytania..."):
+        
+        # A. Generowanie embeddingu dla zapytania
         try:
-            emb = compute_embeddings(doc_texts)
-        except RuntimeError:
-            st.warning("Application stopped due to OpenAI API key error. Check logs.")
+            query_embedding = client_openai.embeddings.create(
+                model="text-embedding-3-small", 
+                input=[query]
+            ).data[0].embedding
+        except Exception as e:
+            st.error(f"Błąd generowania wektora dla zapytania: {e}")
             st.stop()
             
-        st.success(f"Baza wiedzy (zawierająca {len(emb)} wektorów) załadowana pomyślnie!")
-        return emb
-
-# Call the loading function - if it fails, the application stops
-DOCUMENT_EMB = load_document_embeddings(DOCUMENT_TEXTS)
-
-# ------------------------------
-# Phase 2: UI Input and response generation
-# ------------------------------
-st.subheader("Faza 2: Zapytanie do Silnika Wiedzy")
-query = st.text_input("Zadaj pytanie (np. Jak ćwiczyć dynamiczną siłę?):")
-
-if query:
-    if not DOCUMENT_EMB:
-        st.warning("Cannot perform search because the knowledge base is empty.")
-    else:
-        with st.spinner("Szukam kontekstu i generuję odpowiedź..."):
-            
-            # Semantic search
-            best_doc, score = search(query)
-
-            st.markdown("### 🔎 Znaleziony Kontekst (RAG Retrieval)")
-            st.write(f"**Podobieństwo (Cosine Score):** {score:.4f}")
-            st.code(best_doc, language='text') 
-    
-            # Create RAG prompt for LLM
-            final_prompt = f"""
-            Jesteś ekspertem technicznym i wspinaczkowym. Użyj **wyłącznie** poniższego fragmentu wiedzy, 
-            aby odpowiedzieć na pytanie użytkownika. Odpowiadaj zwięźle i precyzyjnie. 
-            Jeśli kontekst nie zawiera odpowiedzi, odpowiedz: 'Brak wystarczających informacji w bazie wiedzy.'.
-    
-            Pytanie:
-            {query}
-    
-            Kontekst:
-            {best_doc}
-    
-            Odpowiedź:
-            """
-    
-            # Call LLM (Groq)
-            answer = ask_llm(final_prompt)
-            st.markdown("### 🤖 Odpowiedź Modelu (Llama 3 70B - Groq)")
-            st.info(answer)
+        # B. Wyszukiwanie kontekstu
+        best_doc, score, source = search_best_context(
+            query_embedding, 
+            DOCUMENT_EMBEDDINGS, 
+            DOCUMENT_TEXTS, 
+            DOCUMENT_SOURCES
+        )
+        
+        # C. Budowanie finalnego prompta dla LLM
+        final_prompt = f"""
+        Jesteś ekspertem technicznym. Użyj "Kontekstu" poniżej, aby odpowiedzieć na "Pytanie".
+        Nie dodawaj informacji, których nie ma w kontekście. 
+        Jeśli kontekst nie zawiera odpowiedzi, odpowiedz: "Brak wystarczających informacji w bazie wiedzy."
+        
+        Pytanie: {query}
+        Kontekst: {best_doc}
+        Odpowiedź: 
+        """
+        
+        # D. Generowanie odpowiedzi LLM (z Groq)
+        answer = ask_llama(final_prompt)
+        
+        # E. Wyświetlanie wyników
+        st.markdown("---")
+        st.subheader("🤖 Odpowiedź Modelu (Llama 3 8B)")
+        st.info(answer)
+        
+        # F. Wyświetlanie kontekstu i źródła
+        st.subheader("🔍 Użyty Kontekst (RAG)")
+        st.code(f"{best_doc}")
+        st.markdown(f"**Źródło:** {source} | **Podobieństwo:** {score:.4f}")
+        
+        st.markdown("---")
