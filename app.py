@@ -14,6 +14,7 @@ except KeyError:
 
 # Inicjalizacja klienta Groq
 try:
+    # Upewnij się, że klucz jest używany podczas inicjalizacji klienta
     client = Groq(api_key=GROQ_API_KEY)
 except Exception as e:
     st.error(f"Błąd inicjalizacji klienta Groq: {e}")
@@ -39,10 +40,15 @@ def compute_embeddings(texts):
                 model="nomic-embed-text",
                 input=t
             )
-            embeddings.append(response.data[0].embedding)
+            # Używamy list() i enumerate() aby zapewnić, że odpowiedź jest poprawnie przetworzona
+            for i, data in enumerate(response.data):
+                embeddings.append(data.embedding)
+
         except Exception as e:
-            # Rzucamy wyjątek, aby zatrzymać aplikację w load_document_embeddings
-            raise RuntimeError(f"Krytyczny błąd API Groq. Sprawdź, czy klucz API jest poprawny. Szczegóły: {e}")
+            # Zmieniamy komunikat, aby jeszcze raz zaznaczyć, że to problem z kluczem/dostępem
+            st.error(f"Krytyczny błąd API Groq w compute_embeddings. Sprawdź, czy klucz API jest POPRAWNY i AKTUALNY oraz czy model 'nomic-embed-text' jest dostępny. Szczegóły: {e}")
+            # Rzucamy wyjątek, aby zakończyć proces (jest to niezbędne do poprawnego działania st.stop() w load_document_embeddings)
+            raise RuntimeError("Nie udało się wygenerować embeddingów.")
             
     return embeddings
 
@@ -89,9 +95,8 @@ def load_document_embeddings():
     with st.spinner("Generowanie embeddingów dla dokumentów..."):
         try:
             emb = compute_embeddings(DOCUMENT_TEXTS)
-        except RuntimeError as e:
+        except RuntimeError:
             # Wyświetla błąd rzucony przez compute_embeddings
-            st.error(str(e))
             st.error("Nie udało się załadować bazy wiedzy. Sprawdź klucz Groq i logi błędów.")
             st.stop()
             
