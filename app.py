@@ -24,7 +24,7 @@ DOCUMENT_TEXTS = [
 def compute_embeddings(texts):
     response = client.embeddings.create(
         model="text-embedding-3-small",
-        input=texts
+        input=[str(t) for t in texts]
     )
     return np.array([item.embedding for item in response.data])
 
