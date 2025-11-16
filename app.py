@@ -73,7 +73,7 @@ def ask_llm(prompt):
     """
     try:
         completion = client.chat.completions.create(
-            model="llama3-70b-8192", # Fast Groq model
+            model="llama-3-8b-8192", # Fast Groq model
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
         )
