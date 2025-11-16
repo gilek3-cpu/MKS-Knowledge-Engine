@@ -1,20 +1,29 @@
 import streamlit as st
 import numpy as np
 import json
+# Importujemy Groq dla LLM
 from groq import Groq
+# Importujemy OpenAI dla opcjonalnego embeddingu
+from openai import OpenAI
 
-# --- KONFIGURACJA API ---
-# Wymaga zmiennej środowiskowej GROQ_API_KEY w Streamlit Secrets
+# --- KONFIGURACJA KLUCZY ---
+# 1. Klucz Groq (dla Llama 3)
 try:
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 except KeyError:
-    # Wyświetla błąd, jeśli klucz nie jest dostępny, i zatrzymuje aplikację
-    st.error("Błąd konfiguracji: Brak klucza 'GROQ_API_KEY' w Streamlit Secrets.")
+    st.error("Błąd: Brak klucza 'GROQ_API_KEY' w Streamlit Secrets.")
     st.stop() 
+
+# 2. Klucz OpenAI (dla embeddingów - do testowania problemu Groq)
+try:
+    OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+    openai_client = OpenAI(api_key=OPENAI_API_KEY)
+except KeyError:
+    st.warning("Uwaga: Brak klucza 'OPENAI_API_KEY'. Próba użycia Groq dla embeddingów.")
+    openai_client = None
 
 # Inicjalizacja klienta Groq
 try:
-    # Upewnij się, że klucz jest używany podczas inicjalizacji klienta
     client = Groq(api_key=GROQ_API_KEY)
 except Exception as e:
     st.error(f"Błąd inicjalizacji klienta Groq: {e}")
@@ -22,35 +31,55 @@ except Exception as e:
 
 
 # ------------------------------
-# EMBEDDINGS (Wektoryzacja) - Groq
+# EMBEDDINGS (Wektoryzacja) - Używamy OpenAI jako fallback
 # ------------------------------
 @st.cache_data
 def compute_embeddings(texts):
     """
-    Generuje embeddingi dla listy tekstów używając modelu Nomic Embed Text
-    dostępnego przez Groq.
+    Generuje embeddingi dla listy tekstów. Domyślnie używa Groq, ale używa OpenAI,
+    jeśli Groq zwraca błąd (np. 404 model_not_found) lub jeśli klucz OpenAI jest dostępny
+    i Groq jest skonfigurowany, by użyć fallbacku.
     """
     embeddings = []
     
-    # Przetwarzanie tekstów w pętli
-    for t in texts:
+    # --- PRÓBA UŻYCIA GROQ ---
+    if not openai_client:
         try:
-            # Używamy Nomic Embed Text
-            response = client.embeddings.create(
-                model="nomic-embed-text",
-                input=t
+            # W tym try-except Groq jest używany jako główny mechanizm.
+            st.info("Używam Groq (nomic-embed-text) dla embeddingów...")
+            for t in texts:
+                response = client.embeddings.create(
+                    model="nomic-embed-text",
+                    input=t
+                )
+                embeddings.append(response.data[0].embedding)
+            st.success("Groq Embeddings sukces!")
+            return embeddings
+        
+        except Exception as e:
+            # Jeśli Groq zawiedzie (jak w Twoim przypadku) i nie mamy klucza OpenAI, to kończymy.
+            st.error(f"Krytyczny błąd API Groq w compute_embeddings. Błąd: {e}")
+            raise RuntimeError("Nie udało się wygenerować embeddingów. (Brak fallbacku OpenAI).")
+
+
+    # --- UŻYCIE OPENAI JAKO FALLBACK (JEŚLI KLUCZ OPENAI JEST DOSTĘPNY) ---
+    else:
+        st.info("Używam OpenAI (text-embedding-3-small) dla embeddingów (jako fallback)...")
+        try:
+            # Wywołujemy API OpenAI
+            response = openai_client.embeddings.create(
+                model="text-embedding-3-small",
+                input=texts
             )
-            # Używamy list() i enumerate() aby zapewnić, że odpowiedź jest poprawnie przetworzona
-            for i, data in enumerate(response.data):
-                embeddings.append(data.embedding)
+            embeddings = [data.embedding for data in response.data]
+            st.success("OpenAI Embeddings sukces!")
+            return embeddings
 
         except Exception as e:
-            # Zmieniamy komunikat, aby jeszcze raz zaznaczyć, że to problem z kluczem/dostępem
-            st.error(f"Krytyczny błąd API Groq w compute_embeddings. Sprawdź, czy klucz API jest POPRAWNY i AKTUALNY oraz czy model 'nomic-embed-text' jest dostępny. Szczegóły: {e}")
-            # Rzucamy wyjątek, aby zakończyć proces (jest to niezbędne do poprawnego działania st.stop() w load_document_embeddings)
-            raise RuntimeError("Nie udało się wygenerować embeddingów.")
-            
-    return embeddings
+            # Jeśli OpenAI też zawiedzie (co jest mało prawdopodobne), rzucamy błąd.
+            st.error(f"Krytyczny błąd API OpenAI w compute_embeddings. Błąd: {e}")
+            raise RuntimeError("Nie udało się wygenerować embeddingów (fallback nieudany).")
+
 
 # ------------------------------
 # LLM Response (using Groq)
@@ -75,7 +104,12 @@ def ask_llm(prompt):
 # ------------------------------
 st.title("🧠 Silnik Wiedzy — Groq Edition 🚀")
 
-st.write("Embeddingi (Nomic Embed) + LLM (Llama 3 70B) działają teraz **w 100% na Groq API**.")
+# Zmodyfikowany tekst UI, aby odzwierciedlić użycie OpenAI/Groq
+if openai_client:
+    st.write("Embeddingi (OpenAI) + LLM (Llama 3 70B) - **Test Fallbacku Embeddings**.")
+else:
+    st.write("Embeddingi (Nomic Embed) + LLM (Llama 3 70B) - **Wszystko na Groq API**.")
+
 st.markdown("---")
 
 
@@ -97,7 +131,7 @@ def load_document_embeddings():
             emb = compute_embeddings(DOCUMENT_TEXTS)
         except RuntimeError:
             # Wyświetla błąd rzucony przez compute_embeddings
-            st.error("Nie udało się załadować bazy wiedzy. Sprawdź klucz Groq i logi błędów.")
+            st.error("Nie udało się załadować bazy wiedzy. Sprawdź klucze API i logi błędów.")
             st.stop()
             
         st.success("Baza wiedzy załadowana pomyślnie!")
