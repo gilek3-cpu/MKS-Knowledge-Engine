@@ -1,22 +1,26 @@
-import streamlit as st
-import pandas as pd
-from openai import OpenAI
-import numpy as np
+import sys
+sys.stdout.reconfigure(encoding="utf-8")
 
-# --- OpenAI client with UTF-8 fix ---
+import streamlit as st
+import numpy as np
+from openai import OpenAI
+
+# --- OpenAI client ---
 client = OpenAI(
     api_key=st.secrets["OPENAI_API_KEY"],
     default_headers={"Content-Type": "application/json; charset=utf-8"}
 )
 
+# --- Dokumenty bazowe ---
 DOCUMENT_TEXTS = [
-    "Procedura reklamacji – klient zgłasza problem przez formularz online.",
-    "Harmonogram pracy magazynu: poniedziałek–piątek 8:00–16:00.",
-    "Zasady zwrotów towaru – do 14 dni od daty zakupu, wymagany paragon.",
-    "Instrukcja obsługi systemu MKS – logowanie, panel klienta, faktury.",
+    "Procedura reklamacji - klient zgłasza problem przez formularz online.",
+    "Harmonogram pracy magazynu: poniedziałek-piątek 08:00-16:00.",
+    "Zasady zwrotu towaru - do 14 dni od daty zakupu, wymagany paragon.",
+    "Instrukcja obsługi systemu MKS - logowanie, panel klienta, faktury."
 ]
 
-@st.cache_data
+# --- Funkcja generująca embeddingi dokumentów ---
+@st.cache_data(show_spinner=False)
 def compute_embeddings(texts):
     response = client.embeddings.create(
         model="text-embedding-3-small",
@@ -24,9 +28,11 @@ def compute_embeddings(texts):
     )
     return np.array([item.embedding for item in response.data])
 
+# Generujemy embeddingi dokumentów JEDEN RAZ
 DOCUMENT_EMB = compute_embeddings(DOCUMENT_TEXTS)
 
-st.title("🔎 Silnik Wiedzy MKS – wyszukiwarka semantyczna")
+# --- UI ---
+st.title("🔍 Silnik Wiedzy MKS – wyszukiwarka semantyczna")
 
 query = st.text_input("Zadaj pytanie:", placeholder="np. 'Jak zgłosić reklamację?'")
 
@@ -44,7 +50,7 @@ if st.button("Szukaj") and query:
 
     best_idx = int(np.argmax(sims))
 
-    st.subheader("📌 Najlepsza odpowiedź:")
+    st.subheader("📄 Najbardziej pasująca odpowiedź:")
     st.write(DOCUMENT_TEXTS[best_idx])
 
-    st.caption(f"Podobieństwo: {sims[best_idx]:.3f}")
+    st.caption(f"Similarity score: {sims[best_idx]:.4f}")
