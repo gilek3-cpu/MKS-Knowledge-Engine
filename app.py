@@ -27,23 +27,22 @@ except Exception as e:
 def compute_embeddings(texts):
     """
     Generuje embeddingi dla listy tekstów używając modelu Nomic Embed Text
-    dostępnego przez Groq. Używa @st.cache_data, by cache'ować wyniki.
+    dostępnego przez Groq.
     """
     embeddings = []
     
     # Przetwarzanie tekstów w pętli
     for t in texts:
         try:
-            # Używamy Nomic Embed Text, jedynego modelu embeddingów na Groq
+            # Używamy Nomic Embed Text
             response = client.embeddings.create(
                 model="nomic-embed-text",
                 input=t
             )
-            # Pobieramy wektor z obiektu odpowiedzi (zwraca listę, bierzemy pierwszy element)
             embeddings.append(response.data[0].embedding)
         except Exception as e:
-            st.error(f"Krytyczny błąd podczas generowania embeddingu dla tekstu: '{t[:30]}...'. Błąd: {e}")
-            return [] # Zwróć pustą listę, aby aplikacja się nie zawiesiła
+            # Rzucamy wyjątek, aby zatrzymać aplikację w load_document_embeddings
+            raise RuntimeError(f"Krytyczny błąd API Groq. Sprawdź, czy klucz API jest poprawny. Szczegóły: {e}")
             
     return embeddings
 
@@ -56,11 +55,10 @@ def ask_llm(prompt):
     """
     try:
         completion = client.chat.completions.create(
-            model="llama3-70b-8192", # Bardzo szybki model od Groq
+            model="llama3-70b-8192", # Szybki model od Groq
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
         )
-        # Poprawny dostęp do odpowiedzi LLM: completion.choices[0].message.content
         return completion.choices[0].message.content
     except Exception as e:
         st.error(f"Błąd podczas wywołania LLM Groq: {e}")
@@ -76,7 +74,6 @@ st.markdown("---")
 
 
 # Example documents
-# Zmieniłem na bardziej złożone dane, aby zademonstrować działanie RAG
 DOCUMENT_TEXTS = [
     "Python jest językiem programowania używanym do analizy danych, uczenia maszynowego i tworzenia aplikacji webowych.",
     "Streamlit to darmowy framework do budowy interaktywnych aplikacji webowych w Pythonie bez znajomości HTML/CSS/JS.",
@@ -84,23 +81,27 @@ DOCUMENT_TEXTS = [
     "Funkcja Cosine Similarity mierzy kąt między dwoma wektorami w przestrzeni, określając podobieństwo semantyczne.",
 ]
 
-# Ładowanie i buforowanie embeddingów
-# Oddzielna funkcja do ładowania, by móc zatrzymać aplikację w razie błędu
+# Ładowanie i buforowanie embeddingów (z zabezpieczeniem)
+@st.cache_resource
 def load_document_embeddings():
     """Wczytuje embeddingi i zapewnia, że aplikacja się nie uruchomi, jeśli to się nie powiedzie."""
     st.subheader("Faza 1: Wczytywanie bazy wiedzy")
     with st.spinner("Generowanie embeddingów dla dokumentów..."):
-        emb = compute_embeddings(DOCUMENT_TEXTS)
-        if not emb:
+        try:
+            emb = compute_embeddings(DOCUMENT_TEXTS)
+        except RuntimeError as e:
+            # Wyświetla błąd rzucony przez compute_embeddings
+            st.error(str(e))
             st.error("Nie udało się załadować bazy wiedzy. Sprawdź klucz Groq i logi błędów.")
             st.stop()
+            
         st.success("Baza wiedzy załadowana pomyślnie!")
         return emb
 
 DOCUMENT_EMB = load_document_embeddings()
 
 # ------------------------------
-# Simple semantic search
+# Simple semantic search (Cosine Similarity)
 # ------------------------------
 def cosine_similarity(a, b):
     """Oblicza podobieństwo cosinusowe między dwoma wektorami."""
@@ -116,8 +117,9 @@ def cosine_similarity(a, b):
 def search(query):
     """Wyszukuje najbardziej podobny dokument do zapytania."""
     # 1. Generowanie embeddingu dla zapytania
-    query_emb_list = compute_embeddings([query])
-    if not query_emb_list:
+    try:
+        query_emb_list = compute_embeddings([query])
+    except RuntimeError:
         return "Błąd generowania wektora zapytania.", 0.0
 
     query_emb = query_emb_list[0]
@@ -136,7 +138,6 @@ query = st.text_input("Zadaj pytanie (np. Czym jest Streamlit?):")
 
 if query:
     if not DOCUMENT_EMB:
-        # Ten warunek jest dodatkowym zabezpieczeniem, jeśli st.stop() zawiedzie
         st.warning("Nie można wykonać wyszukiwania, ponieważ baza wiedzy jest pusta.")
     else:
         with st.spinner("Szukam kontekstu i generuję odpowiedź..."):
@@ -166,4 +167,4 @@ if query:
             # Wywołanie LLM
             answer = ask_llm(final_prompt)
             st.markdown("### 🤖 Odpowiedź Modelu (Llama 3 70B)")
-            st.info(answer) 
+            st.info(answer)
